@@ -1,0 +1,17 @@
+[package]
+authors = [ "Vigen Gasparyan" ]
+edition = "2018"
+name    = "ads1256"
+version = "0.1.0"
+
+description = "A platform agnostic driver to interface the ADS1256 (ADC)"
+keywords    = [ "embedded-hal-driver", "ads1246", "spi" ]
+license     = "MIT OR Apache-2.0"
+readme      = "README.md"
+repository  = "https://github.com/vgasparyan/ads1256-rs"
+
+[dependencies]
+embedded-hal = { version = "0.2.0", features = [ "unproven" ] }
+
+[dev-dependencies]
+linux-embedded-hal = "0.2"
