@@ -13,14 +13,14 @@
 #[deny(missing_docs)]
 extern crate embedded_hal as hal;
 
-//use hal::blocking::spi::{Transfer, Write};
+// use hal::blocking::spi::{Transfer, Write};
 use hal::blocking::delay::DelayUs;
 
 /// ADC reference voltage in volts
 const REF_VOLTS: f64 = 2.5;
 
-//The operation of the ADS1256 is controlled through a set of registers.
-//ADS1256 datasheet,  Table 23.
+// The operation of the ADS1256 is controlled through a set of registers.
+// ADS1256 datasheet,  Table 23.
 #[derive(Debug, Copy, Clone)]
 pub enum Register {
     STATUS = 0x00,
@@ -68,7 +68,7 @@ impl Command {
     }
 }
 
-///Programmable Gain Amplifier (pga) ads1256 datasheet, p. 16
+/// Programmable Gain Amplifier (pga) ads1256 datasheet, p. 16
 #[derive(Debug, Copy, Clone)]
 pub enum PGA {
     Gain1 = 0b000,
@@ -96,7 +96,7 @@ impl PGA {
     }
 }
 
-//Sampling rate
+// Sampling rate
 #[derive(Debug, Copy, Clone)]
 pub enum SamplingRate {
     Sps30000 = 0b1111_0000,
@@ -129,7 +129,7 @@ impl Default for SamplingRate {
     }
 }
 
-//Channel
+// Channel
 #[derive(Debug, Copy, Clone)]
 pub enum Channel {
     AIN0 = 0,
@@ -171,14 +171,14 @@ impl Default for Config {
     }
 }
 
-//ADS1256 driver
+// ADS1256 driver
 #[derive(Debug, Default)]
 pub struct ADS1256<SPI, CS, RST, DRDY, D> {
-    ///Dedicated GPIO pin  that is used to select ADS1256 chip on the SPI bus
+    /// Dedicated GPIO pin  that is used to select ADS1256 chip on the SPI bus
     cs_pin: CS,
-    ///Dedicated GPIO pin to reset the ADS1256
+    /// Dedicated GPIO pin to reset the ADS1256
     reset_pin: RST,
-    ///Dedicated GPIO pin to indicate that conversion is ready
+    /// Dedicated GPIO pin to indicate that conversion is ready
     data_ready_pin: DRDY,
     spi: SPI,
     delay: D,
@@ -188,9 +188,9 @@ pub struct ADS1256<SPI, CS, RST, DRDY, D> {
 impl<SPI, CS, RST, DRDY, D, E> ADS1256<SPI, CS, RST, DRDY, D>
 where
     SPI: hal::blocking::spi::Transfer<u8, Error = E> + hal::blocking::spi::Write<u8, Error = E>,
-    CS: hal::digital::OutputPin,
-    RST: hal::digital::OutputPin,
-    DRDY: hal::digital::InputPin,
+    CS: hal::digital::v2::OutputPin<Error = E>,
+    RST: hal::digital::v2::OutputPin<Error = E>,
+    DRDY: hal::digital::v2::InputPin<Error = E>,
     D: DelayUs<u8>,
 {
     /// Creates a new driver from a SPI
@@ -210,8 +210,8 @@ where
             config : Config::default(),
         };
 
-        //stop read data continuously
-        ads1256.wait_for_ready();
+        // stop read data continuously
+        ads1256.wait_for_ready()?;
         ads1256.send_command(Command::SDATAC)?;
         ads1256.delay.delay_us(10);
         Ok(ads1256)
@@ -230,56 +230,56 @@ where
         self.write_register(Register::ADCON, new_adcon)?;
         self.write_register(Register::DRATE, self.config.sampling_rate.bits())?;
         self.send_command(Command::SELFCAL)?;
-        self.wait_for_ready(); //wait for calibration to complete
+        self.wait_for_ready()?; //wait for calibration to complete
         Ok(())
     }
 
-    ///Returns true if conversion data is ready to  transmit to the host
-    pub fn wait_for_ready(&self) -> bool {
+    /// Returns true if conversion data is ready to  transmit to the host
+    pub fn wait_for_ready(&self) -> Result<bool, E> {
         self.data_ready_pin.is_low()
     }
 
-    ///Read data from specified register
+    /// Read data from specified register
     pub fn read_register(&mut self, reg: Register) -> Result<u8, E> {
-        self.cs_pin.set_low();
-        //write
+        self.cs_pin.set_low()?;
+        // write
         self.spi.write(&[(Command::RREG.bits() | reg.addr()), 0x00])?;
         self.delay.delay_us(10); //t6 delay
-         //read
+         // read
         let mut rx_buf = [0];
         self.spi.transfer(&mut rx_buf)?;
         self.delay.delay_us(5); //t11
-        self.cs_pin.set_high();
+        self.cs_pin.set_high()?;
         Ok(rx_buf[0])
     }
 
-    ///Write data to specified register
+    /// Write data to specified register
     pub fn write_register(&mut self, reg: Register, val: u8) -> Result<(), E> {
-        self.cs_pin.set_low();
+        self.cs_pin.set_low()?;
 
         let mut tx_buf = [(Command::WREG.bits() | reg.addr()), 0x00, val];
         self.spi.transfer(&mut tx_buf)?;
         self.delay.delay_us(5); //t11
-        self.cs_pin.set_high();
+        self.cs_pin.set_high()?;
         Ok(())
     }
 
     pub fn send_command(&mut self, cmd: Command) -> Result<(), E> {
-        self.cs_pin.set_low();
+        self.cs_pin.set_low()?;
         self.spi.write(&[cmd.bits()])?;
-        self.cs_pin.set_high();
+        self.cs_pin.set_high()?;
         Ok(())
     }
 
-    ///Read 24 bit value from ADS1256. Issue this command after DRDY goes low
+    /// Read 24 bit value from ADS1256. Issue this command after DRDY goes low
     fn read_raw_data(&mut self) -> Result<i32, E> {
-        self.cs_pin.set_low();
+        self.cs_pin.set_low()?;
         self.spi.write(&[Command::RDATA.bits()])?;
         self.delay.delay_us(10); //t6 delay = 50*0.13=6.5us
          //receive 3 bytes from spi
         let mut buf = [0u8; 3];
         self.spi.transfer(&mut buf)?;
-        self.cs_pin.set_high();
+        self.cs_pin.set_high()?;
 
         let mut result: u32 = ((buf[0] as u32) << 16) |
                               ((buf[1] as u32) << 8) | (buf[2] as u32);
@@ -290,22 +290,22 @@ where
         Ok(result as i32)
     }
 
-    ///Read an ADC channel and returned  24 bit value as i32
+    /// Read an ADC channel and returned  24 bit value as i32
     pub fn read_channel(&mut self, ch1: Channel, ch2: Channel) -> Result<i32, E> {
-        //wait form data ready pin to be low
-        self.wait_for_ready();
+        // wait form data ready pin to be low
+        self.wait_for_ready()?;
 
-        //select channel
+        // select channel
         self.write_register(Register::MUX, ch1.bits() << 4 | ch2.bits())?;
 
-        //start conversion
+        // start conversion
         self.send_command(Command::SYNC)?;
         self.delay.delay_us(5); //t11
 
         self.send_command(Command::WAKEUP)?;
         self.delay.delay_us(1); //t11
 
-        //read channel data
+        // read channel data
         let adc_code = self.read_raw_data()?;
 
         Ok(adc_code)

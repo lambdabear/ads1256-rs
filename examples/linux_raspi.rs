@@ -15,7 +15,7 @@ use ads1256::{Channel, Config, Register, SamplingRate, ADS1256, PGA};
 use std::thread;
 use std::time::Duration;
 
-fn main() {
+fn main() -> ! {
     println!("Hello ADS1256 driver..");
 
     let mut spi = Spidev::open("/dev/spidev0.1").unwrap();

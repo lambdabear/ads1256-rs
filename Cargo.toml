@@ -11,7 +11,7 @@ readme      = "README.md"
 repository  = "https://github.com/vgasparyan/ads1256-rs"
 
 [dependencies]
-embedded-hal = { version = "0.2.0", features = [ "unproven" ] }
+embedded-hal = { version = "0.2", features = [ "unproven" ] }
 
 [dev-dependencies]
 linux-embedded-hal = "0.2"
