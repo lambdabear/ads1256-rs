@@ -56,7 +56,7 @@ fn main() -> ! {
 
     //create driver instance
     let mut adc = ADS1256::new(spi, cs_pin, rst_pin, drdy_pin, Delay).unwrap();
-    let config = Config::new(SamplingRate::Sps30000, PGA::Gain2);
+    let config = Config::new(SamplingRate::Sps30000, PGA::Gain1);
     adc.set_config(&config).unwrap();
 
     //read all single ended channels in one-shot mode
