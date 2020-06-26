@@ -10,7 +10,7 @@ use linux_hal::spidev::{self, SpidevOptions};
 use linux_hal::sysfs_gpio::Direction;
 use linux_hal::{Delay, Pin, Spidev};
 
-use ads1256::{Channel, Config, Register, SamplingRate, ADS1256, PGA};
+use ads1256::{Channel, Config, SamplingRate, ADS1256, PGA};
 
 use std::thread;
 use std::time::Duration;
@@ -23,7 +23,7 @@ fn main() -> ! {
         .bits_per_word(8)
         .max_speed_hz(1500_000)
         .lsb_first(false)
-        .mode(spidev::SPI_MODE_1)
+        .mode(spidev::SpiModeFlags::SPI_MODE_1)
         .build();
     spi.configure(&options).unwrap();
 

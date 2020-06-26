@@ -149,7 +149,6 @@ impl Channel {
     }
 }
 
-
 #[derive(Debug, Copy, Clone)]
 pub struct Config {
     pub sampling_rate: SamplingRate,
@@ -167,7 +166,10 @@ impl Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Config {sampling_rate: SamplingRate::Sps1000, gain: PGA::Gain1}
+        Config {
+            sampling_rate: SamplingRate::Sps1000,
+            gain: PGA::Gain1,
+        }
     }
 }
 
@@ -185,12 +187,13 @@ pub struct ADS1256<SPI, CS, RST, DRDY, D> {
     config: Config,
 }
 
-impl<SPI, CS, RST, DRDY, D, E> ADS1256<SPI, CS, RST, DRDY, D>
+impl<SPI, CS, RST, DRDY, D, SPIERROR, PINERROR> ADS1256<SPI, CS, RST, DRDY, D>
 where
-    SPI: hal::blocking::spi::Transfer<u8, Error = E> + hal::blocking::spi::Write<u8, Error = E>,
-    CS: hal::digital::v2::OutputPin<Error = E>,
-    RST: hal::digital::v2::OutputPin<Error = E>,
-    DRDY: hal::digital::v2::InputPin<Error = E>,
+    SPI: hal::blocking::spi::Transfer<u8, Error = SPIERROR>
+        + hal::blocking::spi::Write<u8, Error = SPIERROR>,
+    CS: hal::digital::v2::OutputPin<Error = PINERROR>,
+    RST: hal::digital::v2::OutputPin<Error = PINERROR>,
+    DRDY: hal::digital::v2::InputPin<Error = PINERROR>,
     D: DelayUs<u8>,
 {
     /// Creates a new driver from a SPI
@@ -200,14 +203,14 @@ where
         reset_pin: RST,
         data_ready_pin: DRDY,
         delay: D,
-    ) -> Result<Self, E> {
+    ) -> Result<Self, Error<SPIERROR, PINERROR>> {
         let mut ads1256 = ADS1256 {
             spi,
             cs_pin,
             reset_pin,
             data_ready_pin,
             delay,
-            config : Config::default(),
+            config: Config::default(),
         };
 
         // stop read data continuously
@@ -217,81 +220,135 @@ where
         Ok(ads1256)
     }
 
-    pub fn set_config(&mut self, config: &Config) -> Result<(), E> {
-        self.config =  *config;
+    pub fn set_config(&mut self, config: &Config) -> Result<(), Error<SPIERROR, PINERROR>> {
+        self.config = *config;
         self.init()?;
         Ok(())
     }
 
-    pub fn init(&mut self) -> Result<(), E> {
+    pub fn init(&mut self) -> Result<(), Error<SPIERROR, PINERROR>> {
         let adcon = self.read_register(Register::ADCON)?;
-        //disable clkout and set the gain
+        // disable clkout and set the gain
         let new_adcon = (adcon & 0x07) | self.config.gain.bits();
         self.write_register(Register::ADCON, new_adcon)?;
         self.write_register(Register::DRATE, self.config.sampling_rate.bits())?;
         self.send_command(Command::SELFCAL)?;
-        self.wait_for_ready()?; //wait for calibration to complete
+        self.wait_for_ready()?; // wait for calibration to complete
         Ok(())
     }
 
     /// Returns true if conversion data is ready to  transmit to the host
-    pub fn wait_for_ready(&self) -> Result<bool, E> {
-        self.data_ready_pin.is_low()
+    pub fn wait_for_ready(&self) -> Result<bool, Error<SPIERROR, PINERROR>> {
+        match self.data_ready_pin.is_low() {
+            Ok(r) => Ok(r),
+            Err(e) => Err(Error::PinErr(e)),
+        }
     }
 
     /// Read data from specified register
-    pub fn read_register(&mut self, reg: Register) -> Result<u8, E> {
-        self.cs_pin.set_low()?;
-        // write
-        self.spi.write(&[(Command::RREG.bits() | reg.addr()), 0x00])?;
-        self.delay.delay_us(10); //t6 delay
-         // read
-        let mut rx_buf = [0];
-        self.spi.transfer(&mut rx_buf)?;
-        self.delay.delay_us(5); //t11
-        self.cs_pin.set_high()?;
-        Ok(rx_buf[0])
+    pub fn read_register(&mut self, reg: Register) -> Result<u8, Error<SPIERROR, PINERROR>> {
+        match self.cs_pin.set_low() {
+            Err(e) => Err(Error::PinErr(e)),
+            Ok(_) => {
+                // write
+                match self.spi.write(&[(Command::RREG.bits() | reg.addr()), 0x00]) {
+                    Err(e) => Err(Error::SpiErr(e)),
+                    Ok(_) => {
+                        // t6 delay
+                        self.delay.delay_us(10);
+                        // read
+                        let mut rx_buf = [0];
+                        match self.spi.transfer(&mut rx_buf) {
+                            Err(e) => Err(Error::SpiErr(e)),
+                            Ok(_) => {
+                                self.delay.delay_us(5); //t11
+                                match self.cs_pin.set_high() {
+                                    Err(e) => Err(Error::PinErr(e)),
+                                    Ok(_) => Ok(rx_buf[0]),
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Write data to specified register
-    pub fn write_register(&mut self, reg: Register, val: u8) -> Result<(), E> {
-        self.cs_pin.set_low()?;
-
-        let mut tx_buf = [(Command::WREG.bits() | reg.addr()), 0x00, val];
-        self.spi.transfer(&mut tx_buf)?;
-        self.delay.delay_us(5); //t11
-        self.cs_pin.set_high()?;
-        Ok(())
+    pub fn write_register(
+        &mut self,
+        reg: Register,
+        val: u8,
+    ) -> Result<(), Error<SPIERROR, PINERROR>> {
+        match self.cs_pin.set_low() {
+            Err(e) => Err(Error::PinErr(e)),
+            Ok(_) => {
+                let mut tx_buf = [(Command::WREG.bits() | reg.addr()), 0x00, val];
+                match self.spi.transfer(&mut tx_buf) {
+                    Err(e) => Err(Error::SpiErr(e)),
+                    Ok(_) => {
+                        self.delay.delay_us(5); // t11
+                        match self.cs_pin.set_high() {
+                            Err(e) => Err(Error::PinErr(e)),
+                            Ok(_) => Ok(()),
+                        }
+                    }
+                }
+            }
+        }
     }
 
-    pub fn send_command(&mut self, cmd: Command) -> Result<(), E> {
-        self.cs_pin.set_low()?;
-        self.spi.write(&[cmd.bits()])?;
-        self.cs_pin.set_high()?;
-        Ok(())
+    pub fn send_command(&mut self, cmd: Command) -> Result<(), Error<SPIERROR, PINERROR>> {
+        match self.cs_pin.set_low() {
+            Err(e) => Err(Error::PinErr(e)),
+            Ok(_) => match self.spi.write(&[cmd.bits()]) {
+                Err(e) => Err(Error::SpiErr(e)),
+                Ok(_) => match self.cs_pin.set_high() {
+                    Err(e) => Err(Error::PinErr(e)),
+                    Ok(_) => Ok(()),
+                },
+            },
+        }
     }
 
     /// Read 24 bit value from ADS1256. Issue this command after DRDY goes low
-    fn read_raw_data(&mut self) -> Result<i32, E> {
-        self.cs_pin.set_low()?;
-        self.spi.write(&[Command::RDATA.bits()])?;
-        self.delay.delay_us(10); //t6 delay = 50*0.13=6.5us
-         //receive 3 bytes from spi
-        let mut buf = [0u8; 3];
-        self.spi.transfer(&mut buf)?;
-        self.cs_pin.set_high()?;
-
-        let mut result: u32 = ((buf[0] as u32) << 16) |
-                              ((buf[1] as u32) << 8) | (buf[2] as u32);
-        //sign extension if result is negative
-        if (result & 0x800000) != 0 {
-            result |= 0xFF000000;
+    fn read_raw_data(&mut self) -> Result<i32, Error<SPIERROR, PINERROR>> {
+        match self.cs_pin.set_low() {
+            Err(e) => Err(Error::PinErr(e)),
+            Ok(_) => match self.spi.write(&[Command::RDATA.bits()]) {
+                Err(e) => Err(Error::SpiErr(e)),
+                Ok(_) => {
+                    // t6 delay = 50*0.13=6.5us
+                    self.delay.delay_us(10);
+                    // receive 3 bytes from spi
+                    let mut buf = [0u8; 3];
+                    match self.spi.transfer(&mut buf) {
+                        Err(e) => Err(Error::SpiErr(e)),
+                        Ok(_) => match self.cs_pin.set_high() {
+                            Err(e) => Err(Error::PinErr(e)),
+                            Ok(_) => {
+                                let mut result: u32 = ((buf[0] as u32) << 16)
+                                    | ((buf[1] as u32) << 8)
+                                    | (buf[2] as u32);
+                                // sign extension if result is negative
+                                if (result & 0x800000) != 0 {
+                                    result |= 0xFF000000;
+                                }
+                                Ok(result as i32)
+                            }
+                        },
+                    }
+                }
+            },
         }
-        Ok(result as i32)
     }
 
     /// Read an ADC channel and returned  24 bit value as i32
-    pub fn read_channel(&mut self, ch1: Channel, ch2: Channel) -> Result<i32, E> {
+    pub fn read_channel(
+        &mut self,
+        ch1: Channel,
+        ch2: Channel,
+    ) -> Result<i32, Error<SPIERROR, PINERROR>> {
         // wait form data ready pin to be low
         self.wait_for_ready()?;
 
@@ -314,4 +371,10 @@ where
     pub fn convert_to_volt(&self, code: i32) -> f64 {
         (code as f64) / (0x7FFFFF as f64) * (2.0 * REF_VOLTS) / (self.config.gain.val() as f64)
     }
+}
+
+#[derive(Debug)]
+pub enum Error<SPIERROR, PINERROR> {
+    SpiErr(SPIERROR),
+    PinErr(PINERROR),
 }

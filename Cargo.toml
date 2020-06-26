@@ -1,5 +1,5 @@
 [package]
-authors = [ "Vigen Gasparyan" ]
+authors = [ "Vigen Gasparyan", "Ethan Zhang" ]
 edition = "2018"
 name    = "ads1256"
 version = "0.1.0"
@@ -14,4 +14,4 @@ repository  = "https://github.com/vgasparyan/ads1256-rs"
 embedded-hal = { version = "0.2", features = [ "unproven" ] }
 
 [dev-dependencies]
-linux-embedded-hal = "0.2"
+linux-embedded-hal = "0.3.0"
