@@ -13,6 +13,7 @@
 #[deny(missing_docs)]
 extern crate embedded_hal as hal;
 
+use std::sync::{Arc, Mutex};
 // use hal::blocking::spi::{Transfer, Write};
 use hal::blocking::delay::DelayUs;
 
@@ -174,7 +175,7 @@ impl Default for Config {
 }
 
 // ADS1256 driver
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ADS1256<SPI, CS, RST, DRDY, D> {
     /// Dedicated GPIO pin  that is used to select ADS1256 chip on the SPI bus
     cs_pin: CS,
@@ -182,7 +183,7 @@ pub struct ADS1256<SPI, CS, RST, DRDY, D> {
     reset_pin: RST,
     /// Dedicated GPIO pin to indicate that conversion is ready
     data_ready_pin: DRDY,
-    spi: SPI,
+    spi: Arc<Mutex<SPI>>,
     delay: D,
     config: Config,
 }
@@ -198,7 +199,7 @@ where
 {
     /// Creates a new driver from a SPI
     pub fn new(
-        spi: SPI,
+        spi: Arc<Mutex<SPI>>,
         cs_pin: CS,
         reset_pin: RST,
         data_ready_pin: DRDY,
@@ -250,15 +251,15 @@ where
         match self.cs_pin.set_low() {
             Err(e) => Err(Error::PinErr(e)),
             Ok(_) => {
-                // write
-                match self.spi.write(&[(Command::RREG.bits() | reg.addr()), 0x00]) {
+                let mut spi = self.spi.lock().unwrap();
+                match spi.write(&[(Command::RREG.bits() | reg.addr()), 0x00]) {
                     Err(e) => Err(Error::SpiErr(e)),
                     Ok(_) => {
                         // t6 delay
                         self.delay.delay_us(10);
                         // read
                         let mut rx_buf = [0];
-                        match self.spi.transfer(&mut rx_buf) {
+                        match spi.transfer(&mut rx_buf) {
                             Err(e) => Err(Error::SpiErr(e)),
                             Ok(_) => {
                                 self.delay.delay_us(5); //t11
@@ -284,7 +285,8 @@ where
             Err(e) => Err(Error::PinErr(e)),
             Ok(_) => {
                 let mut tx_buf = [(Command::WREG.bits() | reg.addr()), 0x00, val];
-                match self.spi.transfer(&mut tx_buf) {
+                let mut spi = self.spi.lock().unwrap();
+                match spi.transfer(&mut tx_buf) {
                     Err(e) => Err(Error::SpiErr(e)),
                     Ok(_) => {
                         self.delay.delay_us(5); // t11
@@ -301,13 +303,16 @@ where
     pub fn send_command(&mut self, cmd: Command) -> Result<(), Error<SPIERROR, PINERROR>> {
         match self.cs_pin.set_low() {
             Err(e) => Err(Error::PinErr(e)),
-            Ok(_) => match self.spi.write(&[cmd.bits()]) {
-                Err(e) => Err(Error::SpiErr(e)),
-                Ok(_) => match self.cs_pin.set_high() {
-                    Err(e) => Err(Error::PinErr(e)),
-                    Ok(_) => Ok(()),
-                },
-            },
+            Ok(_) => {
+                let mut spi = self.spi.lock().unwrap();
+                match spi.write(&[cmd.bits()]) {
+                    Err(e) => Err(Error::SpiErr(e)),
+                    Ok(_) => match self.cs_pin.set_high() {
+                        Err(e) => Err(Error::PinErr(e)),
+                        Ok(_) => Ok(()),
+                    },
+                }
+            }
         }
     }
 
@@ -315,31 +320,34 @@ where
     fn read_raw_data(&mut self) -> Result<i32, Error<SPIERROR, PINERROR>> {
         match self.cs_pin.set_low() {
             Err(e) => Err(Error::PinErr(e)),
-            Ok(_) => match self.spi.write(&[Command::RDATA.bits()]) {
-                Err(e) => Err(Error::SpiErr(e)),
-                Ok(_) => {
-                    // t6 delay = 50*0.13=6.5us
-                    self.delay.delay_us(10);
-                    // receive 3 bytes from spi
-                    let mut buf = [0u8; 3];
-                    match self.spi.transfer(&mut buf) {
-                        Err(e) => Err(Error::SpiErr(e)),
-                        Ok(_) => match self.cs_pin.set_high() {
-                            Err(e) => Err(Error::PinErr(e)),
-                            Ok(_) => {
-                                let mut result: u32 = ((buf[0] as u32) << 16)
-                                    | ((buf[1] as u32) << 8)
-                                    | (buf[2] as u32);
-                                // sign extension if result is negative
-                                if (result & 0x800000) != 0 {
-                                    result |= 0xFF000000;
+            Ok(_) => {
+                let mut spi = self.spi.lock().unwrap();
+                match spi.write(&[Command::RDATA.bits()]) {
+                    Err(e) => Err(Error::SpiErr(e)),
+                    Ok(_) => {
+                        // t6 delay = 50*0.13=6.5us
+                        self.delay.delay_us(10);
+                        // receive 3 bytes from spi
+                        let mut buf = [0u8; 3];
+                        match spi.transfer(&mut buf) {
+                            Err(e) => Err(Error::SpiErr(e)),
+                            Ok(_) => match self.cs_pin.set_high() {
+                                Err(e) => Err(Error::PinErr(e)),
+                                Ok(_) => {
+                                    let mut result: u32 = ((buf[0] as u32) << 16)
+                                        | ((buf[1] as u32) << 8)
+                                        | (buf[2] as u32);
+                                    // sign extension if result is negative
+                                    if (result & 0x800000) != 0 {
+                                        result |= 0xFF000000;
+                                    }
+                                    Ok(result as i32)
                                 }
-                                Ok(result as i32)
-                            }
-                        },
+                            },
+                        }
                     }
                 }
-            },
+            }
         }
     }
 
